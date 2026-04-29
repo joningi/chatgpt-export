@@ -109,9 +109,12 @@ class Client:
             h.update(extra)
         return h
 
-    def get(self, path: str, *, raw: bool = False, retries: int = 4) -> tuple[int, bytes | dict]:
+    def get(self, path: str, *, raw: bool = False, retries: int = 6) -> tuple[int, bytes | dict]:
         url = path if path.startswith("http") else BASE + path
-        delay = 1.0
+        # Start backoff at 10 s, double, cap at 60 s. With retries=6 the worst-
+        # case wait is 10+20+40+60+60+60 = 250 s (~4 min) before giving up,
+        # which is enough to ride out most ChatGPT 429 windows.
+        delay = 10.0
         for attempt in range(retries):
             req = urllib.request.Request(url, headers=self._headers())
             try:
@@ -132,13 +135,13 @@ class Client:
                     sleep_for = float(ra) if ra and ra.replace(".", "").isdigit() else delay
                     print(f"    HTTP {code} on {path[:80]} — sleeping {sleep_for:.1f}s (attempt {attempt+1}/{retries})", flush=True)
                     time.sleep(sleep_for)
-                    delay *= 2
+                    delay = min(delay * 2, 60.0)
                     continue
                 return code, e.read()
             except (urllib.error.URLError, TimeoutError) as e:
                 print(f"    network err {e} on {path[:80]} — sleeping {delay:.1f}s", flush=True)
                 time.sleep(delay)
-                delay *= 2
+                delay = min(delay * 2, 60.0)
         return 0, b"max retries exceeded"
 
     def list_conversations(self, page_size: int = 100):
@@ -153,7 +156,7 @@ class Client:
             if len(items) < page_size:
                 return
             offset += page_size
-            time.sleep(0.3)
+            time.sleep(1.0)
 
     def get_conversation(self, cid: str) -> dict:
         status, j = self.get(f"/backend-api/conversation/{cid}")
@@ -505,7 +508,7 @@ def run(args):
                 j = client.get_conversation(cid)
                 raw_path.write_text(json.dumps(j, ensure_ascii=False, indent=2))
                 fetched += 1
-                time.sleep(0.3)
+                time.sleep(1.0)
 
             md_path = _write_md(j, cid, client)
             rendered += 1
