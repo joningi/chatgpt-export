@@ -500,25 +500,32 @@ def run(args):
     for i, it in enumerate(items, 1):
         cid = it["id"]
         raw_path = RAW_DIR / f"{cid}.json"
+        existing_md = next(MD_DIR.glob(f"*_{cid[:8]}.md"), None)
         try:
-            if raw_path.exists():
-                j = json.loads(raw_path.read_text())
+            # Fast path: both raw and rendered already exist — fully skipped, no I/O.
+            if raw_path.exists() and existing_md is not None:
                 skipped += 1
+                continue
+
+            if raw_path.exists():
+                # Raw cached but markdown missing — render only, no API call.
+                j = json.loads(raw_path.read_text())
             else:
+                # Need to fetch.
                 j = client.get_conversation(cid)
                 raw_path.write_text(json.dumps(j, ensure_ascii=False, indent=2))
                 fetched += 1
                 time.sleep(1.0)
 
-            md_path = _write_md(j, cid, client)
+            _write_md(j, cid, client)
             rendered += 1
-            tag = "skip" if raw_path.exists() and skipped else "fetch"
+            tag = "render" if raw_path.exists() and not fetched else "fetch"
             print(f"  [{i:>4}/{len(items)}] {cid[:8]}  msgs={len(walk_active_path(j.get('mapping') or {}, j.get('current_node'))):>3}  {it.get('title','')[:50]}")
         except Exception as e:
             failed.append((cid, str(e)))
             print(f"  [{i:>4}/{len(items)}] {cid[:8]}  FAILED: {e}", flush=True)
 
-    print(f"\ndone — fetched {fetched}, skipped {skipped}, rendered {rendered}, failed {len(failed)}")
+    print(f"\ndone — fetched {fetched}, rendered {rendered}, skipped {skipped}, failed {len(failed)}")
     if failed:
         (DATA / "failures.json").write_text(json.dumps(failed, indent=2))
         print(f"failures recorded in data/failures.json")
