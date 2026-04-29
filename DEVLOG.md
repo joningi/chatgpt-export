@@ -4,7 +4,7 @@ How this tool got built, focused on the final design and the things worth knowin
 
 ## Goal
 
-Extract a ChatGPT user's full chat history to Markdown and raw JSON before an enterprise tenant gets deleted, with about a week of runway. Two constraints made the obvious paths unavailable:
+Extract a ChatGPT user's full chat history to Markdown and raw JSON before an enterprise tenant gets deleted, with about two weeks of runway. Two constraints made the obvious paths unavailable:
 
 - **Settings → Data Controls → Export data** is admin-disabled at the tenant level.
 - The tool needs to work for any employee in the tenant, on Linux, macOS, or Windows — so cookie extraction has to be possible from a normal browser's DevTools, not just by developers with `browser-harness` or similar.
