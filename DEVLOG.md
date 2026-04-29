@@ -83,9 +83,9 @@ Both of these are the kind of thing you only see when running for real over the 
 
 First real run, with the initial defaults (4 retries, 1 → 2 → 4 → 8 s exponential backoff, 0.3 s pacing between requests), hit `HTTP 429` on `/backend-api/conversation/{id}` around the 230th conversation and burned through all retries on **4 conversations** before the rate-limit window cleared. Those conversations were not cached (no raw JSON written) so they were eligible for a retry on the next run, but ideally the script should ride out a 429 burst on first attempt.
 
-Fix: bumped retries to 6, started backoff at 10 s and capped at 60 s (worst-case wait ≈ 4 min), and slowed inter-request pacing from 0.3 s to 1.0 s. The full run takes ~30–40 min instead of ~20, but doesn't lose conversations to rate limiting. Commit `2118108`.
+Fix: bumped retries to 6, started backoff at 10 s and capped at 60 s (worst-case wait ≈ 4 min), and slowed inter-request pacing from 0.3 s to 1.0 s. With these settings the run no longer loses conversations to rate limiting — but the observed sustained rate is **much** slower than the initial estimate. ChatGPT's per-account rate limit on `/backend-api/conversation/{id}` is aggressive enough that the typical pattern under load is "fetch one, sleep 10 s on a 429, fetch one, sleep 20 s, ..." — roughly **1 fetch per minute** once the rate-limit floor kicks in. For a ~1,300-conversation account that means the full export is an **overnight job** (~15–24 h), not the ~30–40 min we'd initially hoped for. The run is resumable, so killing and restarting is safe; the cached raw JSON is skipped on the next run. Commit `2118108`.
 
-If a future ChatGPT version sends `Retry-After` on its 429s, the existing handler honours that header, so it'll automatically take precedence over our manual backoff.
+If a future ChatGPT version sends `Retry-After` on its 429s, the existing handler honours that header, so it'll automatically take precedence over our manual backoff. Worth checking response headers next time someone re-runs this — `Retry-After`-driven pacing would in principle be friendlier than blind backoff, though we never observed it being sent.
 
 ### Restarts re-rendered every cached conversation
 

@@ -69,7 +69,13 @@ python3 export.py --limit 5
 python3 export.py
 ```
 
-A full run is serial with a 0.3 s pause between requests; expect roughly **1 second per conversation**. 1,000 chats ≈ 15 minutes.
+A full run is serial with a 1 s pause between requests. **Plan for it to take a long time.** ChatGPT applies aggressive per-account rate limits on the conversation-fetch endpoint, and the script rides them out with backoff (10 s → 60 s, up to 6 attempts per request). The sustained rate observed in practice is roughly **1 conversation per minute** once the rate-limit floor kicks in:
+
+- ~100 chats: 30 min – 1 hour
+- ~500 chats: 6 – 10 hours
+- ~1,000+ chats: **plan for an overnight run** (15 – 24 hours)
+
+The script is resumable — kill it, sleep, restart, it picks up where it left off (already-fetched raw JSON is cached on disk and skipped).
 
 ## Prerequisites
 
@@ -203,9 +209,11 @@ Cookies expire (the session token typically lasts a few weeks, but Cloudflare to
 
 Same as above — session expired during a long run. Refresh `cookies.txt` and re-run; the export is resumable, so it'll pick up where it left off (already-fetched conversations are cached in `data/raw/`).
 
-### `HTTP 429`
+### Many `HTTP 429 — sleeping ...s` messages / very slow run
 
-Rate limit. The script automatically retries with exponential backoff and honours `Retry-After` headers, but if you've been hammering the API from another tool too you may need to wait a few minutes.
+**Expected.** ChatGPT applies aggressive per-account rate limits on the `/backend-api/conversation/{id}` endpoint, and they kick in within the first few hundred fetches on a full export. The script's backoff (10 s → 60 s, up to 6 attempts per request, honouring `Retry-After`) rides them out without losing data. Don't kill the process when you see these messages — it's working as intended.
+
+Sustained rate under throttle: roughly **1 conversation per minute**. Large accounts are an overnight job. The run is resumable, so you can stop and restart at any time.
 
 ### `urllib.error.URLError: [SSL: CERTIFICATE_VERIFY_FAILED]` on macOS
 
