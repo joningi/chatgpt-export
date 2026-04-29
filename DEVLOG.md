@@ -95,6 +95,27 @@ Fix: before doing anything, glob for `data/markdown/*_<id8>.md`. If both the raw
 
 A side effect of the glob check is that title changes between runs leave a stale Markdown file with the old name. Acceptable — `--rerender` regenerates everything from cache, and the raw JSON is the canonical record.
 
+## Timeline — idea to running tool
+
+Wall-clock from problem statement to a stable running export, all on 2026-04-29:
+
+| time | event |
+|---|---|
+| 20:00 | Project kickoff: "we need to export ChatGPT chats before the tenant gets deleted" |
+| 20:03 | DEVLOG started |
+| 20:11 | Cookies extracted via `cdp("Network.getCookies", ...)` after the page-JS approach wedged the browser tab |
+| 20:14 | Plain-Python flow validated end-to-end: cookie → `/api/auth/session` → bearer → `/backend-api/conversations` returns 200 |
+| 20:22 | First 5-conversation sample rendered to Markdown |
+| 20:25 | PUA citation-markup gotcha caught (the "strange symbols" the user noticed) and `clean_pua()` fixed it |
+| 20:32 | Project pivoted from "personal export" to "self-serve tool other employees can use" — required a non-`browser-harness` cookie path |
+| 20:36 | Refactored for general use: `cookies.txt` path, `--check` flag, Windows-safe filenames |
+| 20:42 | Initial release pushed to `GagnaveitaReykjavikur/chatgpt-export` (commit `e936bf0`) — README, DEVLOG, LICENSE, the lot |
+| 20:48 | First real-run failure: 4 conversations lost to `HTTP 429` with the original tight backoff |
+| 20:53 | Calmer rate-limit defaults committed and pushed; the export that's still running started here |
+| 20:59 | Skip-rerender bug caught (user noticed it from the markdown directory churn during restart) and fixed |
+
+So roughly **45 minutes from idea to tool published on GitHub**, and **~55 minutes to a stable running export**. The remaining wall-clock (currently a projected ~17 h to finish 1,326 conversations under ChatGPT's rate-limiter) is network-bound: the code was done at 20:53. Most of the design lessons in this DEVLOG were discovered between 20:00 and 20:53 — the rest of the "wall clock" is just data moving.
+
 ## Conventions for this DEVLOG
 
 - Newest day on top. Sub-sections under each day's heading.
