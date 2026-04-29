@@ -118,6 +118,8 @@ python export.py --check
 
 PowerShell handles UTF-8 output correctly; the legacy `cmd` console may garble Icelandic / non-ASCII conversation titles in console output (the saved files are still UTF-8 either way).
 
+> **Non-technical Windows user?** See [Step-by-step Windows walk-through](#step-by-step-windows-walk-through) below for a literal click-by-click guide.
+
 ## Extract cookies
 
 The script needs the cookies your browser uses when you're logged in to ChatGPT. There are two supported formats; for a one-off export, **the text method is simpler**.
@@ -194,6 +196,130 @@ python3 export.py --rerender
 # 4. Full export
 python3 export.py
 ```
+
+## Step-by-step Windows walk-through
+
+For non-technical users on Windows. Allow ~10 minutes of setup, plus the actual export time (see *Quick start* above for size-based estimates — large accounts are an overnight job).
+
+You'll need a GitHub account that's a member of the **GagnaveitaReykjavikur** org so you can access this private repo. If you can open <https://github.com/GagnaveitaReykjavikur/chatgpt-export> in your browser, you're in.
+
+### 1. Install Python
+
+If you don't already have Python 3.10 or newer installed:
+
+1. Go to <https://www.python.org/downloads/windows/>.
+2. Click the highlighted **"Download Python 3.x.x"** button at the top.
+3. Run the downloaded installer.
+4. **IMPORTANT:** on the first installer screen, tick **"Add python.exe to PATH"** at the bottom *before* clicking *Install Now*.
+5. Wait for the install to finish, then close the installer.
+
+Verify: open PowerShell (Start menu → type "PowerShell" → click *Windows PowerShell*). At the prompt, run:
+
+```powershell
+python --version
+```
+
+You should see `Python 3.10.x` or higher. If you see `'python' is not recognized`, the PATH checkbox above wasn't ticked — re-run the installer and check it.
+
+### 2. Download the tool
+
+1. In your browser, go to <https://github.com/GagnaveitaReykjavikur/chatgpt-export> and sign in to GitHub with your work account if prompted.
+2. Click the green **"<> Code"** button.
+3. Click **"Download ZIP"** at the bottom of the dropdown.
+4. Open your **Downloads** folder. Right-click `chatgpt-export-main.zip` → **Extract All...** → click **Extract**.
+
+You should now have `Downloads\chatgpt-export-main\chatgpt-export-main\`. Open the inner folder so you can see files like `README.md` and `export.py`.
+
+### 3. Open PowerShell in the project folder
+
+In the File Explorer window showing the inner `chatgpt-export-main` folder:
+
+1. Click on the address bar at the top of the window (where the path is displayed).
+2. Delete what's there, type `powershell`, and press **Enter**.
+
+A blue PowerShell window opens, already in the right folder. (If `powershell` doesn't work, try `pwsh` instead — that's PowerShell 7.)
+
+### 4. Get your ChatGPT cookies
+
+The script needs the cookies your browser uses when you're signed in to ChatGPT. **They are equivalent to your password** — anyone with that file can sign in as you until the session expires. Keep it private. (The `.secrets\` folder is gitignored, so it won't accidentally end up committed back to the repo.)
+
+#### 4a. Open ChatGPT and DevTools
+
+1. In Chrome or Edge, go to <https://chatgpt.com>. **Make sure you're signed in with the account you want to export.**
+2. Press `Ctrl + Shift + I` to open DevTools. (Alternatively: right-click anywhere on the page → *Inspect*.)
+
+#### 4b. Find a request to copy headers from
+
+1. In DevTools, click the **Network** tab at the top.
+2. The list will probably look empty at first. To populate it, click around the ChatGPT sidebar — open one of your existing chats, or press `F5` to refresh the page. Many requests will appear.
+3. In the small **Filter** box near the top of the Network tab, type `backend-api`. The list will narrow to just the requests carrying your auth.
+4. Click on **any one of the listed requests** — they all carry the same cookies.
+
+#### 4c. Copy the Cookie value
+
+1. With the request selected, look at the right-hand panel of DevTools. Click the **Headers** tab in that panel.
+2. Scroll down to the **Request Headers** section.
+3. Find the line that starts with `Cookie:`. The value is a single very long string — typically several thousand characters — that begins something like `__Secure-next-auth.session-token=...; oai-did=...; __cf_bm=...;` and so on.
+4. **Right-click on the value** (not on the word "Cookie:") and choose **Copy value**.
+
+If you don't see "Copy value" in the right-click menu, your DevTools version uses slightly different wording — try **Copy** or **Copy → Cookie value**. As a last resort: click into the value, press `Ctrl+A` to select all of it, then `Ctrl+C` to copy.
+
+#### 4d. Save it to disk
+
+Switch back to your PowerShell window (still in the project folder) and run:
+
+```powershell
+New-Item -ItemType Directory -Path .secrets -Force | Out-Null
+Get-Clipboard -Raw | Set-Content -Path .secrets\cookies.txt -NoNewline
+```
+
+That creates the `.secrets` folder and writes whatever's on your clipboard into `cookies.txt`.
+
+#### 4e. Sanity check the file
+
+```powershell
+(Get-Item .secrets\cookies.txt).Length
+```
+
+You should see a number in the **thousands** (typically 5,000–12,000). If it's much smaller than that, the wrong thing got copied — go back to step 4c and try again. If it's `0`, the clipboard was empty when you ran the save command — copy the value again and re-run the save command in 4d.
+
+Cookies eventually expire (typically a few weeks for the session token, but Cloudflare tokens rotate hourly). If a long-running export starts hitting `HTTP 401`, just redo step 4 — the export resumes from cache where it left off.
+
+### 5. Verify your cookies work
+
+```powershell
+python export.py --check
+```
+
+You should see your own email address and `list status: HTTP 200`. If you get `no accessToken in /api/auth/session — cookies likely expired`, your cookies are stale or you copied the wrong line — go back to step 4.
+
+### 6. Trial run on the first 5 conversations
+
+```powershell
+python export.py --limit 5
+```
+
+This fetches and renders the 5 most-recent conversations. Open `data\markdown\` in File Explorer and double-click one of the `.md` files — it should open in Notepad (or your preferred editor) and look like a clean transcript of that chat.
+
+### 7. Full export
+
+```powershell
+python export.py
+```
+
+This runs through every conversation. **For accounts with hundreds of conversations this is an overnight job** — see the time estimates at the top of this README. The script prints progress per conversation and is resumable: if you need to stop it (`Ctrl+C`), just re-run the same command — it will skip what's already on disk and pick up where it left off.
+
+You can leave the PowerShell window open and minimize it. Don't close it; that would stop the export.
+
+### 8. Find your output
+
+When the export finishes, your data is in three folders inside the project:
+
+- `data\markdown\` — one `.md` file per conversation. Open in Notepad, VS Code, Obsidian, or any Markdown viewer.
+- `data\raw\` — the unmodified API responses, useful as a backup if anything in the Markdown looks off.
+- `data\files\` — uploaded attachments and any images generated in your chats.
+
+Copy the entire `data\` folder to OneDrive, an external drive, or wherever your personal long-term archive lives. That's your saved history.
 
 ## Troubleshooting
 
