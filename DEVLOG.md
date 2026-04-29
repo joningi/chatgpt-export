@@ -75,6 +75,26 @@ Most likely to surprise:
 
 `update_time` on conversations isn't stable across reads within a session — possibly because GET on `/backend-api/conversation/{id}` triggers a server-side touch, or because some background job updates conversations near read-time. **Doesn't affect a full export** — you fetch all of them either way — but it means `--limit 5` may not give you "the 5 chats at the top of your sidebar right now."
 
+## Bugs found during the live run
+
+Both of these are the kind of thing you only see when running for real over the full account. Worth surfacing here so the next maintainer knows the design choices were earned.
+
+### Rate-limit retries were originally too tight
+
+First real run, with the initial defaults (4 retries, 1 → 2 → 4 → 8 s exponential backoff, 0.3 s pacing between requests), hit `HTTP 429` on `/backend-api/conversation/{id}` around the 230th conversation and burned through all retries on **4 conversations** before the rate-limit window cleared. Those conversations were not cached (no raw JSON written) so they were eligible for a retry on the next run, but ideally the script should ride out a 429 burst on first attempt.
+
+Fix: bumped retries to 6, started backoff at 10 s and capped at 60 s (worst-case wait ≈ 4 min), and slowed inter-request pacing from 0.3 s to 1.0 s. The full run takes ~30–40 min instead of ~20, but doesn't lose conversations to rate limiting. Commit `2118108`.
+
+If a future ChatGPT version sends `Retry-After` on its 429s, the existing handler honours that header, so it'll automatically take precedence over our manual backoff.
+
+### Restarts re-rendered every cached conversation
+
+Original loop always called `_write_md()` per iteration, even when the raw JSON was cached and the rendered Markdown already on disk. On a restart of a partially-completed run, that meant re-serialising every cached conversation's Markdown — minutes of disk I/O before the script reached the first conversation that actually needed fetching. From outside, the markdown directory looked busy while no real progress was being made on the API side; the user pointed this out while watching the run.
+
+Fix: before doing anything, glob for `data/markdown/*_<id8>.md`. If both the raw JSON and a Markdown file matching the conversation's id8 exist, skip with no I/O. `--rerender` mode is unaffected (it explicitly forces re-rendering from cache). Commit `59df5c2`.
+
+A side effect of the glob check is that title changes between runs leave a stale Markdown file with the old name. Acceptable — `--rerender` regenerates everything from cache, and the raw JSON is the canonical record.
+
 ## Conventions for this DEVLOG
 
 - Newest day on top. Sub-sections under each day's heading.
