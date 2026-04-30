@@ -116,6 +116,41 @@ Wall-clock from problem statement to a stable running export, all on 2026-04-29:
 
 So roughly **45 minutes from idea to tool published on GitHub**, and **~55 minutes to a stable running export**. The remaining wall-clock (currently a projected ~17 h to finish 1,326 conversations under ChatGPT's rate-limiter) is network-bound: the code was done at 20:53. Most of the design lessons in this DEVLOG were discovered between 20:00 and 20:53 — the rest of the "wall clock" is just data moving.
 
+## Run results — finish stats and post-export polish
+
+The first full export of the user's account completed cleanly. Final tally from the script:
+
+```
+fetched 1107, skipped 219, rendered 1326, failed 0
+```
+
+| | |
+|---|---|
+| Wall-clock | ~18 h 27 min (yesterday 20:53 → today 15:20) |
+| Conversations exported | **1,326 / 1,326** |
+| HTTP 429 retries ridden out | **1,400+** during the run, **0** lost |
+| Raw JSON | 127 MB across 1,326 files |
+| Markdown | 34 MB across 1,326 files |
+| Attachments downloaded | 1.1 MB across 263 conversation directories |
+
+The realized wall-clock matched the ~15–24 h estimate published in the README the previous day, so nothing surprising on the rate-limit front.
+
+### Sanity sample across the full corpus
+
+A pass over all 1,326 rendered Markdown files (rather than the 5 we eyeballed earlier) surfaced a few things worth recording:
+
+- **`workspace:` empty in every frontmatter.** The list endpoint returns `workspace_id` per item, but the per-conversation tree endpoint does not — so `j.get("workspace_id")` was always `None` at render time. Fixed by stashing the list-item's `workspace_id` under `_workspace_id` on the cached raw JSON at fetch time, and a one-shot backfill walked the list once to patch all 1,326 already-cached files. Rerendering after backfill: empty workspace count `0 / 1326`. Commit pending.
+- **1,500 attachments returned `download failed`.** ChatGPT auto-expires generated images and uploaded files after a retention window; the file_ids in those messages are no longer fetchable. The raw JSON preserves the file_ids and any associated metadata, so a future recovery pass could try again, but most are likely permanently gone. Not a fixable bug.
+- **134 PUA characters across 7 files (`U+F0D6` etc).** Different range from ChatGPT's citation markup (`U+E200–E20F`) — these are Wingdings / Word symbol-font artifacts in *user-pasted* content (e.g., a financial report bulleted with ``). Not a render bug; legit user input. Left alone.
+- **5 messages with `content_type: "system_error"`** (ValueError, NoDocumentsFound, etc) hit the unknown-content_type fallback and rendered as a fenced JSON dump — content preserved, just not pretty. Could add a dedicated renderer if it shows up more often.
+- **33 conversations have alternate branches** (`has_alternate_branches: true`). Active path rendered as designed; the alternates are still in the raw JSON.
+
+### `--rerender` was making thousands of network calls
+
+While re-running the rerender after the workspace fix, noticed `--rerender` was hanging — because the renderer's attachment-download path was attempting *every* previously-failed `file_id` afresh. With 1,500 known-failed attachments and ChatGPT's rate limits, a "no API" rerender was actually 50+ minutes of mostly-failing API calls.
+
+Fix: make `--rerender` pass `client=None` into the renderer, which short-circuits `_download_attachment` to "use what's already on disk, otherwise emit a `download failed` placeholder." Also moved the rerender branch in `run()` to *before* the `mint_token` call, so an expired cookie no longer blocks re-rendering an already-fetched archive (which had also surfaced during this work — the session token had rotated during the 18-hour run). Rerender now runs in ~2.4 seconds for 1,326 conversations. Commit pending.
+
 ## Conventions for this DEVLOG
 
 - Newest day on top. Sub-sections under each day's heading.

@@ -283,7 +283,7 @@ def asset_file_id(asset_pointer: str) -> str:
     return asset_pointer.split("//", 1)[-1]
 
 
-def render_message(msg: dict, *, conv_files_dir: Path, conv_id8: str, client: Client, files_index: dict) -> str:
+def render_message(msg: dict, *, conv_files_dir: Path, conv_id8: str, client: Client | None, files_index: dict) -> str:
     """Render one visible message to markdown. Side effect: downloads attachments
     into conv_files_dir, populating files_index keyed by file_id."""
     role = (msg.get("author") or {}).get("role", "?")
@@ -363,7 +363,7 @@ def render_message(msg: dict, *, conv_files_dir: Path, conv_id8: str, client: Cl
     return head + "\n\n" + body
 
 
-def _render_part_dict(p: dict, conv_files_dir: Path, conv_id8: str, client: Client, files_index: dict) -> str:
+def _render_part_dict(p: dict, conv_files_dir: Path, conv_id8: str, client: Client | None, files_index: dict) -> str:
     """Render a non-string part (image_asset_pointer, etc)."""
     pct = p.get("content_type")
     if pct == "image_asset_pointer":
@@ -388,22 +388,28 @@ def _render_part_dict(p: dict, conv_files_dir: Path, conv_id8: str, client: Clie
     return f"<!-- unrendered part content_type: {pct} -->\n```json\n{json.dumps(p, indent=2)[:1000]}\n```"
 
 
-def _download_attachment(file_id: str | None, name: str | None, conv_files_dir: Path, conv_id8: str, client: Client, files_index: dict, mime: str | None = None) -> str | None:
+def _download_attachment(file_id: str | None, name: str | None, conv_files_dir: Path, conv_id8: str, client: Client | None, files_index: dict, mime: str | None = None) -> str | None:
     """Download a file_id into conv_files_dir, return the markdown-relative path
-    (e.g. ../files/abc12345/file_XXX_image.jpg). Returns None on failure."""
+    (e.g. ../files/abc12345/file_XXX_image.jpg). Returns None on failure.
+
+    If client is None (e.g. --rerender mode), only files already on disk are
+    linked — no API calls are attempted. ChatGPT auto-expires generated images
+    after a retention window, so retrying unknown file_ids during rerender
+    typically means thousands of slow per-file failures with nothing to gain."""
     if not file_id:
         return None
     if file_id in files_index:
         return files_index[file_id]
-    conv_files_dir.mkdir(parents=True, exist_ok=True)
     safe = (name or "").replace("/", "_") if name else ""
     out_name = f"{file_id}_{safe}" if safe else file_id
     out_name = SAFE_NAME.sub("_", out_name)[:120]
     out = conv_files_dir / out_name
     if not out.exists():
+        if client is None:
+            return None
+        conv_files_dir.mkdir(parents=True, exist_ok=True)
         url = client.file_download_url(file_id)
         if not url:
-            print(f"    no download_url for {file_id}")
             return None
         data = client.fetch_bytes(url)
         if not data:
@@ -414,13 +420,15 @@ def _download_attachment(file_id: str | None, name: str | None, conv_files_dir: 
     return rel
 
 
-def render_conversation(j: dict, *, conv_files_dir: Path, conv_id8: str, client: Client) -> str:
+def render_conversation(j: dict, *, conv_files_dir: Path, conv_id8: str, client: Client | None) -> str:
     title = j.get("title") or "untitled"
     cid = j.get("conversation_id") or ""
     created = fmt_ts(j.get("create_time"))
     updated = fmt_ts(j.get("update_time"))
     model = j.get("default_model_slug") or ""
-    ws = j.get("workspace_id") or ""
+    # workspace_id is on list items but not on the per-conversation tree;
+    # we stash it on the cached JSON under _workspace_id at fetch time.
+    ws = j.get("_workspace_id") or j.get("workspace_id") or ""
     mapping = j.get("mapping") or {}
     cur = j.get("current_node")
     active = walk_active_path(mapping, cur)
@@ -455,6 +463,27 @@ def render_conversation(j: dict, *, conv_files_dir: Path, conv_id8: str, client:
 # ---------- orchestration ----------
 
 def run(args):
+    # --rerender works entirely from cached raw JSON; no cookies/network needed.
+    # Handle it before anything that touches credentials so an expired cookie
+    # doesn't block re-rendering an already-fetched archive.
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    MD_DIR.mkdir(parents=True, exist_ok=True)
+    FILES_DIR.mkdir(parents=True, exist_ok=True)
+    if args.rerender:
+        ids = sorted(p.stem for p in RAW_DIR.glob("*.json"))
+        print(f"rerender mode: {len(ids)} cached conversations (no API calls)")
+        # client=None makes _write_md skip attachment downloads — already-
+        # downloaded files still link, missing ones render as "download failed".
+        # Otherwise rerender re-attempts every previously failed file_id, which
+        # on a typical run is ~1,500 slow API calls with nothing to gain.
+        for n, cid in enumerate(ids if not args.limit else ids[: args.limit], 1):
+            j = json.loads((RAW_DIR / f"{cid}.json").read_text())
+            _write_md(j, cid, None)
+            if n % 200 == 0:
+                print(f"  rerendered {n}/{len(ids)}")
+        print(f"  rerendered {len(ids)}/{len(ids)} — done")
+        return
+
     cookie = load_creds()
     if args.check or args.refresh_token:
         token, user = mint_token(cookie)
@@ -471,20 +500,6 @@ def run(args):
     token, user = mint_token(cookie)
     print(f"logged in as {user.get('email')!r} ({user.get('name')!r})")
     client = Client(cookie, token)
-
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    MD_DIR.mkdir(parents=True, exist_ok=True)
-    FILES_DIR.mkdir(parents=True, exist_ok=True)
-
-    # 1) gather id list
-    if args.rerender:
-        ids = sorted(p.stem for p in RAW_DIR.glob("*.json"))
-        print(f"rerender mode: {len(ids)} cached conversations")
-        items_meta = {p.stem: json.loads(p.read_text()) for p in RAW_DIR.glob("*.json")}
-        for cid in (ids if not args.limit else ids[: args.limit]):
-            j = items_meta[cid]
-            _write_md(j, cid, client)
-        return
 
     print("listing conversations...")
     items = list(client.list_conversations())
@@ -511,8 +526,13 @@ def run(args):
                 # Raw cached but markdown missing — render only, no API call.
                 j = json.loads(raw_path.read_text())
             else:
-                # Need to fetch.
+                # Need to fetch. Inject workspace_id from the list item — the
+                # per-conversation endpoint doesn't return it, so we stash it
+                # under _workspace_id so the rendered frontmatter and
+                # --rerender both have it.
                 j = client.get_conversation(cid)
+                if it.get("workspace_id"):
+                    j["_workspace_id"] = it["workspace_id"]
                 raw_path.write_text(json.dumps(j, ensure_ascii=False, indent=2))
                 fetched += 1
                 time.sleep(1.0)
@@ -531,7 +551,7 @@ def run(args):
         print(f"failures recorded in data/failures.json")
 
 
-def _write_md(j: dict, cid: str, client: Client) -> Path:
+def _write_md(j: dict, cid: str, client: Client | None) -> Path:
     title = j.get("title") or "untitled"
     created = j.get("create_time")
     import datetime
