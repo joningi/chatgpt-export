@@ -153,7 +153,7 @@ Fix: make `--rerender` pass `client=None` into the renderer, which short-circuit
 
 ## Field report — Windows cp1252 broke every render
 
-After the tool was published, a colleague tried it on a default Windows 10 + Python 3.x install. Every render failed before writing a single byte:
+After the tool was published, a colleague tried it on Windows. Every render failed before writing a single byte:
 
 ```
 [   1/5] xxxxxxxx  FAILED: 'charmap' codec can't encode character '\U0001f449' in position 10281: character maps to <undefined>
