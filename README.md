@@ -353,6 +353,10 @@ ChatGPT's API includes Unicode Private Use Area characters as inline citation ma
 
 Use **PowerShell**, not the legacy `cmd` console. The saved files are UTF-8 either way.
 
+### Windows: `UnicodeEncodeError: 'charmap' codec can't encode character`
+
+Older versions wrote files using the system's default encoding (cp1252 on Western Windows installs), which can't represent `→`, emoji, or the `U+E200…` citation markers that occasionally appear in chats. Fixed in commit `6694e89` — pull or re-download the latest version. Workaround on a stale checkout: `python -X utf8 export.py`.
+
 ## Security notes
 
 - The cookies in `.secrets/cookies.txt` are **equivalent to your password** for ChatGPT — anyone with that file can sign in as you until the session expires. Treat the file accordingly. `.secrets/` is in `.gitignore`; do not commit it.

@@ -151,6 +151,49 @@ While re-running the rerender after the workspace fix, noticed `--rerender` was 
 
 Fix: make `--rerender` pass `client=None` into the renderer, which short-circuits `_download_attachment` to "use what's already on disk, otherwise emit a `download failed` placeholder." Also moved the rerender branch in `run()` to *before* the `mint_token` call, so an expired cookie no longer blocks re-rendering an already-fetched archive (which had also surfaced during this work — the session token had rotated during the 18-hour run). Rerender now runs in ~2.4 seconds for 1,326 conversations. Commit `a2ec02d`.
 
+## Field report — Windows cp1252 broke every render
+
+After the tool was published, a colleague tried it on a default Windows 10 + Python 3.x install. Every render failed before writing a single byte:
+
+```
+[   1/5] xxxxxxxx  FAILED: 'charmap' codec can't encode character '\U0001f449' in position 10281: character maps to <undefined>
+[   2/5] xxxxxxxx  FAILED: 'charmap' codec can't encode character '→' in position 10394: character maps to <undefined>
+...
+done — fetched 0, rendered 0, skipped 0, failed 5
+```
+
+Their workaround was `python -X utf8 export.py`, which made it work. Fixed properly in commit `6694e89` by passing `encoding="utf-8"` at every text I/O site.
+
+### Root cause
+
+Python's `Path.write_text()`, `Path.read_text()`, and `open()` in text mode all default to `locale.getpreferredencoding(False)` when no `encoding=` is given. On Linux and macOS this resolves to UTF-8 via `LANG`/`LC_CTYPE`, so the developer's machine never sees the bug. On Windows it resolves to the system **ANSI code page**, which on a Western install is **cp1252** — a single-byte encoding with no mapping for `→` (`U+2192`), emoji like `👉` (`U+1F449`), or any character in the `U+E200`–`U+E20F` Private Use Area we use ChatGPT's citation markup from. The first markdown file the renderer tried to write that contained any of those raised `UnicodeEncodeError` and the conversation was logged as failed.
+
+The error happens *before* the bytes hit disk — Python encodes the str at write time, and cp1252 has no escape hatch for unmapped codepoints unless you pass `errors="replace"`. So no partial file, no recoverable state; the render just dies.
+
+### Why this didn't show up in our testing
+
+The full live export ran on a Linux developer machine end-to-end. The Windows step-by-step walk-through in the README was written and reviewed in good faith but never executed against a real Windows install. Linux developers never see this class of bug — the locale is UTF-8 end-to-end and `read_text()` / `write_text()` "just work." Windows has been moving toward UTF-8 default for years (PEP 540 added `-X utf8` mode in 3.7; PEP 686 makes UTF-8 mode the default in 3.15) but until then, **the developer's locale and the user's locale are different**, and any text I/O without an explicit `encoding=` is a latent Windows bug.
+
+The data we were specifically writing — model output containing `→` arrows, occasional emoji, plus the `U+E200…` citation markers that survive `clean_pua()` if the renderer ever misses one — was uniquely well-suited to triggering it. A "hello world" markdown file would have written fine.
+
+### Fix
+
+Seven `read_text()` / `write_text()` sites in `export.py` now pass `encoding="utf-8"` explicitly:
+
+- cookies (`cookies.txt`, `cookies.json`) on read
+- raw conversation JSON cache on read (main loop + `--rerender` path)
+- raw conversation JSON cache on write
+- `data/failures.json` on write
+- the rendered Markdown on write — *this* is the one that was actually crashing
+
+`python export.py` now works on a vanilla Windows install with no flags. Commit `6694e89`.
+
+### Lesson, broadly applicable
+
+Treat any cross-platform Python tool as having a latent Windows encoding bug at every `open()`, `read_text()`, `write_text()`, and `subprocess.run(..., text=True)` call site without an explicit `encoding=`. The defaults *will* differ between developer and user. `encoding="utf-8"` everywhere is the cheapest fix: it makes the encoding visible in the diff, stable across Python versions, and independent of whose locale is running. `-X utf8` is a fine personal escape hatch, but a non-technical user won't think to add it, and it doesn't help if the script ever shells out to subprocesses with their own text I/O defaults.
+
+Worth the same audit on `print()` for terminal output, in principle — Python wraps `sys.stdout` with `locale.getpreferredencoding()` on Windows too — but in practice the colleague's run got past `print(...)` for the `FAILED:` lines (which themselves contained `→`) and only died on the file write. Modern Python (3.6+) on Windows uses `WriteConsoleW` for the console encoder, which sidesteps cp1252 for stdout when the target is a real console. So the file-write fix above is sufficient; no `sys.stdout.reconfigure()` needed.
+
 ## Conventions for this DEVLOG
 
 - Newest day on top. Sub-sections under each day's heading.
