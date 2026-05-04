@@ -67,12 +67,12 @@ def load_creds() -> str:
     txt = SECRETS / "cookies.txt"
     js = SECRETS / "cookies.json"
     if txt.exists():
-        raw = txt.read_text().strip()
+        raw = txt.read_text(encoding="utf-8").strip()
         if raw.lower().startswith("cookie:"):
             raw = raw.split(":", 1)[1].strip()
         return raw
     if js.exists():
-        return cookie_header(json.loads(js.read_text()))
+        return cookie_header(json.loads(js.read_text(encoding="utf-8")))
     raise RuntimeError(
         "no credentials found. Create one of:\n"
         f"  {txt}   (paste the Cookie header from DevTools — see README)\n"
@@ -477,7 +477,7 @@ def run(args):
         # Otherwise rerender re-attempts every previously failed file_id, which
         # on a typical run is ~1,500 slow API calls with nothing to gain.
         for n, cid in enumerate(ids if not args.limit else ids[: args.limit], 1):
-            j = json.loads((RAW_DIR / f"{cid}.json").read_text())
+            j = json.loads((RAW_DIR / f"{cid}.json").read_text(encoding="utf-8"))
             _write_md(j, cid, None)
             if n % 200 == 0:
                 print(f"  rerendered {n}/{len(ids)}")
@@ -524,7 +524,7 @@ def run(args):
 
             if raw_path.exists():
                 # Raw cached but markdown missing — render only, no API call.
-                j = json.loads(raw_path.read_text())
+                j = json.loads(raw_path.read_text(encoding="utf-8"))
             else:
                 # Need to fetch. Inject workspace_id from the list item — the
                 # per-conversation endpoint doesn't return it, so we stash it
@@ -533,7 +533,7 @@ def run(args):
                 j = client.get_conversation(cid)
                 if it.get("workspace_id"):
                     j["_workspace_id"] = it["workspace_id"]
-                raw_path.write_text(json.dumps(j, ensure_ascii=False, indent=2))
+                raw_path.write_text(json.dumps(j, ensure_ascii=False, indent=2), encoding="utf-8")
                 fetched += 1
                 time.sleep(1.0)
 
@@ -547,7 +547,7 @@ def run(args):
 
     print(f"\ndone — fetched {fetched}, rendered {rendered}, skipped {skipped}, failed {len(failed)}")
     if failed:
-        (DATA / "failures.json").write_text(json.dumps(failed, indent=2))
+        (DATA / "failures.json").write_text(json.dumps(failed, indent=2), encoding="utf-8")
         print(f"failures recorded in data/failures.json")
 
 
@@ -561,7 +561,7 @@ def _write_md(j: dict, cid: str, client: Client | None) -> Path:
     out = MD_DIR / fname
     conv_files_dir = FILES_DIR / cid8
     md = render_conversation(j, conv_files_dir=conv_files_dir, conv_id8=cid8, client=client)
-    out.write_text(md)
+    out.write_text(md, encoding="utf-8")
     return out
 
 
